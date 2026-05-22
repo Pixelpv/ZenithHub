@@ -75,6 +75,7 @@ local UI         = safeLoad(BASE .. "UI.lua",             {})
 local BLOX_FRUITS_PLACE_IDS = {
     [2753915549] = true,  -- Blox Fruits (Principal)
     [4442272298] = true,  -- Blox Fruits (Versão alternativa)
+    [7449423635] = true   -- Blox Fruits (Versão mais recente)
 }
 
 local currentPlaceId = game.PlaceId
