@@ -1,14 +1,6 @@
 --[[
     ZenithHub - Loader.lua
-    Script de carregamento remoto
-    Cole este arquivo no executor para iniciar o hub
-
-    COMO USAR:
-    - Opção 1 (remoto via GitHub/CDN):
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/SEU_USER/ZenithHub/main/Loader.lua"))()
-
-    - Opção 2 (local via executor):
-        loadstring(readfile("ZenithHub/Loader.lua"))()
+    Loader remoto/local corrigido
 ]]
 
 -- ════════════════════════════════════════════
@@ -18,21 +10,23 @@ if _G.ZenithHubLoading then
     warn("[ZenithHub Loader] Carregamento já em andamento.")
     return
 end
+
 _G.ZenithHubLoading = true
 
 -- ════════════════════════════════════════════
--- CONFIGURAÇÃO DO LOADER
+-- CONFIGURAÇÃO
 -- ════════════════════════════════════════════
 
 local LOADER_CONFIG = {
-    -- Altere para true para usar arquivos locais do executor
-    UseLocal = true,
 
-    -- URL base para carregamento remoto (GitHub raw ou CDN)
-    -- Apenas usado se UseLocal = false
-    RemoteBase = "https://raw.githubusercontent.com/SEU_USER/ZenithHub/main/",
+    -- false = baixa do GitHub automaticamente
+    -- true = usa arquivos já existentes no executor
+    UseLocal = false,
 
-    -- Arquivos a carregar (na ordem correta)
+    -- LINK RAW DO GITHUB
+    RemoteBase = "https://raw.githubusercontent.com/Pixelpv/Zenith-Hub/main/",
+
+    -- Arquivos necessários
     Files = {
         "Config.lua",
         "Modules/Universal.lua",
@@ -41,183 +35,224 @@ local LOADER_CONFIG = {
         "Main.lua",
     },
 
-    -- Pasta local (raiz onde os arquivos .lua estão)
+    -- Pasta local
     LocalBase = "ZenithHub/",
 }
 
 -- ════════════════════════════════════════════
--- UTILITÁRIOS
+-- SERVIÇOS
 -- ════════════════════════════════════════════
 
-local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local StarterGui = game:GetService("StarterGui")
 
--- Notificação simples via game (antes do Fluent carregar)
-local function earlyNotify(msg)
+-- ════════════════════════════════════════════
+-- NOTIFICAÇÃO
+-- ════════════════════════════════════════════
+
+local function notify(text)
     pcall(function()
-        game:GetService("StarterGui"):SetCore("SendNotification", {
-            Title    = "Zenith Hub",
-            Text     = msg,
-            Duration = 4,
+        StarterGui:SetCore("SendNotification", {
+            Title = "Zenith Hub",
+            Text = text,
+            Duration = 5
         })
     end)
-    print("[ZenithHub] " .. msg)
+
+    print("[ZenithHub] " .. text)
 end
 
--- Verifica compatibilidade com o executor
+-- ════════════════════════════════════════════
+-- VERIFICAR EXECUTOR
+-- ════════════════════════════════════════════
+
 local function checkExecutor()
-    local features = {
-        writefile  = type(writefile)  == "function",
-        readfile   = type(readfile)   == "function",
-        isfile     = type(isfile)     == "function",
-        loadstring = type(loadstring) == "function",
-        HttpGet    = type(game.HttpGet) == "function" or
-                     type(game["HttpGet"]) == "function",
+
+    local required = {
+        "loadstring",
+        "readfile",
+        "writefile",
+        "isfile",
+        "makefolder"
     }
 
     local missing = {}
-    for feat, has in pairs(features) do
-        if not has then table.insert(missing, feat) end
+
+    for _, func in ipairs(required) do
+        if type(getgenv()[func]) ~= "function" then
+            table.insert(missing, func)
+        end
     end
 
     if #missing > 0 then
-        warn("[ZenithHub] Executor não suporta: " .. table.concat(missing, ", "))
-        return false, missing
+        warn("[ZenithHub] Funções faltando: " .. table.concat(missing, ", "))
+        return false
     end
-    return true, {}
+
+    return true
 end
 
--- Cria pastas necessárias no executor
-local function ensureFolders()
+-- ════════════════════════════════════════════
+-- CRIAR PASTAS
+-- ════════════════════════════════════════════
+
+local function createFolders()
+
     local folders = {
         "ZenithHub",
         "ZenithHub/Modules",
-        "ZenithHub/Assets",
+        "ZenithHub/Assets"
     }
+
     for _, folder in ipairs(folders) do
+
         if makefolder and not isfolder(folder) then
-            pcall(makefolder, folder)
+            pcall(function()
+                makefolder(folder)
+            end)
         end
     end
 end
 
 -- ════════════════════════════════════════════
--- DOWNLOAD REMOTO (opcional)
+-- DOWNLOAD DOS ARQUIVOS
 -- ════════════════════════════════════════════
 
 local function downloadFiles()
-    earlyNotify("Baixando arquivos do Zenith Hub...")
-    local success = true
+
+    notify("Baixando arquivos...")
 
     for _, file in ipairs(LOADER_CONFIG.Files) do
-        local url = LOADER_CONFIG.RemoteBase .. file
-        local localPath = LOADER_CONFIG.LocalBase .. file
 
-        local ok, err = pcall(function()
-            local content = game:HttpGet(url, true)
-            writefile(localPath, content)
-            print("[ZenithHub] Baixado: " .. file)
+        local url = LOADER_CONFIG.RemoteBase .. file
+        local path = LOADER_CONFIG.LocalBase .. file
+
+        local success, result = pcall(function()
+
+            local content = game:HttpGet(url)
+
+            if not content or content == "" then
+                error("Arquivo vazio")
+            end
+
+            writefile(path, content)
         end)
 
-        if not ok then
-            warn("[ZenithHub] Falha ao baixar " .. file .. ": " .. tostring(err))
-            success = false
+        if success then
+            print("[ZenithHub] Baixado -> " .. file)
+        else
+            warn("[ZenithHub] Erro ao baixar " .. file)
+            warn(result)
+
+            notify("Erro ao baixar: " .. file)
+
+            return false
         end
 
         task.wait(0.1)
     end
 
-    return success
+    return true
 end
 
 -- ════════════════════════════════════════════
--- VERIFICAÇÃO DE ARQUIVOS LOCAIS
+-- VERIFICAR ARQUIVOS
 -- ════════════════════════════════════════════
 
-local function checkLocalFiles()
+local function checkFiles()
+
     for _, file in ipairs(LOADER_CONFIG.Files) do
+
         local path = LOADER_CONFIG.LocalBase .. file
+
         if not isfile(path) then
             return false, path
         end
     end
-    return true, nil
+
+    return true
 end
 
 -- ════════════════════════════════════════════
--- CARREGAMENTO PRINCIPAL
+-- INICIAR HUB
 -- ════════════════════════════════════════════
 
 local function startHub()
-    -- 1. Garante que pastas existam
-    ensureFolders()
 
-    -- 2. Verifica/baixa arquivos
+    createFolders()
+
     if not LOADER_CONFIG.UseLocal then
-        local hasFiles, missingPath = checkLocalFiles()
-        if not hasFiles then
-            print("[ZenithHub] Arquivo faltando: " .. tostring(missingPath))
-            local downloaded = downloadFiles()
-            if not downloaded then
-                earlyNotify("Falha ao baixar arquivos. Verifique a conexão.")
-                _G.ZenithHubLoading = false
-                return
-            end
-        end
-    else
-        -- Modo local: verifica se os arquivos existem
-        local hasFiles, missingPath = checkLocalFiles()
-        if not hasFiles then
-            earlyNotify("Arquivo não encontrado: " .. tostring(missingPath))
-            warn("[ZenithHub] Certifique-se de que os arquivos estão em: " .. LOADER_CONFIG.LocalBase)
+
+        local ok = downloadFiles()
+
+        if not ok then
             _G.ZenithHubLoading = false
             return
         end
     end
 
-    -- 3. Carrega Main.lua (que inicializa tudo)
-    earlyNotify("Iniciando Zenith Hub...")
-    task.wait(0.2)
+    local filesOk, missing = checkFiles()
 
-    local mainPath = LOADER_CONFIG.LocalBase .. "Main.lua"
-    local ok, err = pcall(function()
-        local src = readfile(mainPath)
-        local fn, compileErr = loadstring(src, "ZenithHub/Main")
-        if not fn then
-            error("Compile error: " .. tostring(compileErr))
+    if not filesOk then
+
+        warn("[ZenithHub] Arquivo não encontrado: " .. tostring(missing))
+
+        notify("Arquivo faltando")
+
+        _G.ZenithHubLoading = false
+        return
+    end
+
+    notify("Iniciando Zenith Hub...")
+
+    local success, err = pcall(function()
+
+        local source = readfile("ZenithHub/Main.lua")
+
+        local func, compileError = loadstring(source)
+
+        if not func then
+            error(compileError)
         end
-        fn()
+
+        func()
     end)
 
-    if not ok then
-        warn("[ZenithHub] Erro ao iniciar Main.lua: " .. tostring(err))
-        earlyNotify("Erro ao carregar hub. Ver console.")
+    if not success then
+
+        warn("[ZenithHub] Erro ao iniciar:")
+        warn(err)
+
+        notify("Erro ao iniciar hub")
+
         _G.ZenithHubLoading = false
-    else
-        _G.ZenithHubLoading = false
-        print("[ZenithHub] Loader concluído.")
+        return
     end
+
+    notify("Hub carregado!")
+
+    _G.ZenithHubLoading = false
 end
 
 -- ════════════════════════════════════════════
--- ENTRY POINT
+-- START
 -- ════════════════════════════════════════════
 
--- Verificação de compatibilidade
-local compatible, missingFeatures = checkExecutor()
-if not compatible then
-    earlyNotify("Executor incompatível. Faltam: " .. table.concat(missingFeatures, ", "))
+if not checkExecutor() then
+
+    notify("Executor incompatível")
+
     _G.ZenithHubLoading = false
+
     return
 end
 
--- Aguarda personagem estar pronto
-local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 
 if not LocalPlayer.Character then
     LocalPlayer.CharacterAdded:Wait()
 end
+
 task.wait(1)
 
--- Inicia em thread separada para não travar
 task.spawn(startHub)
