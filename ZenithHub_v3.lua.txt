@@ -1,0 +1,1153 @@
+--[[
+╔══════════════════════════════════════════════════╗
+║        ZENITH HUB  v3.0  (SINGLE FILE)          ║
+║       Blox Fruits — Executor Ready               ║
+║  Stealth rewrite: sem teleporte instantâneo      ║
+║  Patterns: Vua Hub + Zyn Hub open source         ║
+╚══════════════════════════════════════════════════╝
+]]
+
+if _G.ZenithLoaded then print("[ZenithHub] Já carregado!") return end
+_G.ZenithLoaded = true
+
+-- ════════════════════════════════════════════════
+-- SERVIÇOS
+-- ════════════════════════════════════════════════
+local Players          = game:GetService("Players")
+local RS               = game:GetService("ReplicatedStorage")
+local TweenService     = game:GetService("TweenService")
+local CollectionService= game:GetService("CollectionService")
+local Lighting         = game:GetService("Lighting")
+local UIS              = game:GetService("UserInputService")
+local VIM              = game:GetService("VirtualInputManager")
+local HttpService      = game:GetService("HttpService")
+local RunService       = game:GetService("RunService")
+
+local plr = Players.LocalPlayer
+
+-- ════════════════════════════════════════════════
+-- SAVE / LOAD (Zyn Hub pattern)
+-- ════════════════════════════════════════════════
+local FolderName = "ZenithHub"
+local FileName   = "Settings.json"
+local FullPath   = FolderName .. "/" .. FileName
+
+if makefolder and not isfolder(FolderName) then
+    pcall(makefolder, FolderName)
+end
+
+_G.SaveData = _G.SaveData or {}
+
+local function SaveSettings()
+    if not writefile then return false end
+    pcall(function()
+        writefile(FullPath, HttpService:JSONEncode(_G.SaveData))
+    end)
+end
+
+local function LoadSettings()
+    if not (isfile and isfile(FullPath)) then return false end
+    local ok, res = pcall(function()
+        return HttpService:JSONDecode(readfile(FullPath))
+    end)
+    if ok and res then _G.SaveData = res end
+end
+
+LoadSettings()
+
+-- ════════════════════════════════════════════════
+-- AGUARDA JOGO CARREGAR + PERSONAGEM
+-- ════════════════════════════════════════════════
+if not plr.Character then plr.CharacterAdded:Wait() end
+repeat
+    local m = plr.PlayerGui:FindFirstChild("Main")
+    m = m and m:FindFirstChild("Loading")
+    task.wait()
+until game:IsLoaded() and not (m and m.Visible)
+
+-- ════════════════════════════════════════════════
+-- DETECÇÃO DE MUNDO
+-- ════════════════════════════════════════════════
+local placeId = game.PlaceId
+World1 = placeId == 2753915549 or placeId == 85211729168715
+World2 = placeId == 4442272183 or placeId == 79091703265657
+World3 = placeId == 7449423635 or placeId == 100117331123089
+local WORLD = World1 and 1 or World2 and 2 or World3 and 3 or 1
+
+-- ════════════════════════════════════════════════
+-- REMOTES
+-- ════════════════════════════════════════════════
+local CommF_ = RS:WaitForChild("Remotes", 15):WaitForChild("CommF_", 15)
+local CommE  = RS:WaitForChild("Remotes", 15):WaitForChild("CommE",  15)
+
+local function invoke(...)
+    if CommF_ then pcall(CommF_.InvokeServer, CommF_, ...) end
+end
+local function fire(...)
+    if CommE then pcall(CommE.FireServer, CommE, ...) end
+end
+
+-- ════════════════════════════════════════════════
+-- HOOK FUNCTIONS — padrão dos open sources
+-- ════════════════════════════════════════════════
+pcall(function() hookfunction(error, function() end) end)
+pcall(function() hookfunction(warn,  function() end) end)
+pcall(function() hookfunction(require(RS.Effect.Container.Death), function() end) end)
+pcall(function() hookfunction(require(RS:WaitForChild("GuideModule")).ChangeDisplayedNPC, function() end) end)
+
+-- ════════════════════════════════════════════════
+-- NAMECALL HOOK (Vua Hub stealth pattern)
+-- Intercepta FireServer para spoofar MousePos em skills
+-- ════════════════════════════════════════════════
+MousePos = Vector3.zero -- atualizado pelo loop de farm
+pcall(function()
+    local mt = getrawmetatable(game)
+    local old_nc = mt.__namecall
+    setreadonly(mt, false)
+    mt.__namecall = newcclosure(function(...)
+        local method = getnamecallmethod()
+        local args = {...}
+        if tostring(method) == "FireServer" then
+            if tostring(args[1]) == "RemoteEvent" then
+                local a2 = tostring(args[2])
+                if a2 ~= "true" and a2 ~= "false" then
+                    if _G.AimSkill then
+                        args[2] = MousePos
+                        return old_nc(table.unpack(args))
+                    end
+                end
+            end
+        end
+        return old_nc(...)
+    end)
+    setreadonly(mt, true)
+end)
+
+-- ════════════════════════════════════════════════
+-- FULL BRIGHT + LIMPEZA
+-- ════════════════════════════════════════════════
+pcall(function()
+    Lighting.Ambient           = Color3.new(0.695, 0.695, 0.695)
+    Lighting.ColorShift_Bottom = Color3.new(0.695, 0.695, 0.695)
+    Lighting.ColorShift_Top    = Color3.new(0.695, 0.695, 0.695)
+    Lighting.Brightness        = 2
+    Lighting.FogEnd            = 1e10
+    local wo = workspace:FindFirstChild("_WorldOrigin")
+    if wo then local f = wo:FindFirstChild("Foam;") if f then f:Destroy() end end
+    local rk = workspace:FindFirstChild("Rocks") if rk then rk:Destroy() end
+end)
+
+-- ════════════════════════════════════════════════
+-- GLOBALS
+-- ════════════════════════════════════════════════
+_G.MobHeight    = _G.MobHeight    or 20
+_G.SelectWeapon = _G.SelectWeapon or nil
+_G.AimSkill     = false
+_G.BringRange   = 250
+RandomCFrame    = false
+HealthM         = 500
+_B              = false
+PosMon          = Vector3.zero
+
+-- Controle de skills da fruta (Zyn Hub)
+_G.FruitSkills = { Z=false, X=false, C=false, V=false, F=false }
+
+-- ════════════════════════════════════════════════
+-- UTILITÁRIOS BASE
+-- ════════════════════════════════════════════════
+local function char()  return plr.Character end
+local function Root()  local c=char() return c and c:FindFirstChild("HumanoidRootPart") end
+local function hum()   local c=char() return c and c:FindFirstChildOfClass("Humanoid") end
+local function alive() local h=hum()  return h and h.Health > 0 end
+local function level() local ok,v=pcall(function() return plr.Data.Level.Value end) return ok and v or 0 end
+
+-- ════════════════════════════════════════════════
+-- TELEPORTE STEALTH — SEM SALTO INSTANTÂNEO
+-- ════════════════════════════════════════════════
+--
+--  O problema que causava kick:
+--  `r.CFrame = cf` de uma vez = velocidade infinita detectada pelo servidor.
+--
+--  Solução: movimento em PASSOS pequenos com task.wait() entre cada passo.
+--  Cada passo move no máximo TP_STEP_SIZE studs.
+--  Entre passos há um delay de TP_STEP_DELAY segundos.
+--  A velocidade resultante (~75 studs / 0.07s = ~1071 st/s) fica bem acima
+--  do walk mas abaixo do threshold de kick do BF.
+--
+--  Para usar TweenService (visual mais suave, menos passos no log de network):
+--  configure S.UseTween = true e S.TweenSpeed (studs/segundo).
+-- ════════════════════════════════════════════════
+local TP_STEP_SIZE  = 75   -- máximo de studs por passo
+local TP_STEP_DELAY = 0.07 -- delay entre passos (segundos)
+local TP_TWEEN_SPD  = 180  -- studs/s no modo TweenService
+
+local UseTween = false -- pode ser alterado pela UI
+
+local function tweenTo(cf, spd)
+    local r = Root()
+    if not r then return end
+    local dist = (r.Position - cf.Position).Magnitude
+    if dist < 1 then return end
+    local t = math.clamp(dist / (spd or TP_TWEEN_SPD), 0.05, 3)
+    local tw = TweenService:Create(r, TweenInfo.new(t, Enum.EasingStyle.Linear), {CFrame = cf})
+    tw:Play()
+    tw.Completed:Wait()
+end
+
+local function steppedTp(cf)
+    local r = Root()
+    if not r then return end
+    local from = r.CFrame
+    local dist = (from.Position - cf.Position).Magnitude
+    if dist <= TP_STEP_SIZE then
+        r.CFrame = cf
+        return
+    end
+    local steps = math.ceil(dist / TP_STEP_SIZE)
+    for i = 1, steps do
+        local r2 = Root()
+        if not r2 then break end
+        local t = i / steps
+        r2.CFrame = from:Lerp(cf, t)
+        if i < steps then task.wait(TP_STEP_DELAY) end
+    end
+end
+
+-- Ponto de entrada público — respeita a configuração UseTween
+_tp = function(cf)
+    if UseTween then
+        tweenTo(cf)
+    else
+        steppedTp(cf)
+    end
+end
+notween = steppedTp  -- alias de compatibilidade (sem tween mesmo com UseTween=true)
+
+-- ════════════════════════════════════════════════
+-- EQUIP WEAPON
+-- ════════════════════════════════════════════════
+EquipWeapon = function(name)
+    if not name then return end
+    local bp = plr.Backpack:FindFirstChild(name)
+    if bp then
+        local h = hum()
+        if h then h:EquipTool(bp) end
+    end
+end
+
+weaponSc = function(tip)
+    for _, t in pairs(plr.Backpack:GetChildren()) do
+        if t:IsA("Tool") and t.ToolTip == tip then
+            EquipWeapon(t.Name)
+        end
+    end
+end
+
+-- ════════════════════════════════════════════════
+-- BRING ENEMY — com cooldown e range limit
+-- ════════════════════════════════════════════════
+local _bringCooldown = 0
+
+BringEnemy = function()
+    if not _B then return end
+    local now = tick()
+    if now - _bringCooldown < 0.08 then return end
+    _bringCooldown = now
+
+    for _, mob in pairs(workspace.Enemies:GetChildren()) do
+        if mob:FindFirstChild("Humanoid") and mob.Humanoid.Health > 0 and mob.PrimaryPart then
+            if (mob.PrimaryPart.Position - PosMon).Magnitude <= _G.BringRange then
+                mob.PrimaryPart.CFrame   = CFrame.new(PosMon)
+                mob.PrimaryPart.CanCollide = true
+                mob.Humanoid.WalkSpeed   = 0
+                mob.Humanoid.JumpPower   = 0
+                if mob.Humanoid:FindFirstChild("Animator") then
+                    pcall(function() mob.Humanoid.Animator:Destroy() end)
+                end
+                plr.SimulationRadius = math.huge
+            end
+        end
+    end
+end
+
+-- ════════════════════════════════════════════════
+-- USESKILLS (Vua Hub)
+-- ════════════════════════════════════════════════
+Useskills = function(wtype, key)
+    weaponSc(wtype)
+    task.wait(0.05)
+    VIM:SendKeyEvent(true,  key, false, game)
+    task.wait(0.05)
+    VIM:SendKeyEvent(false, key, false, game)
+end
+
+UseFruitSkills = function()
+    weaponSc("Blox Fruit")
+    if _G.FruitSkills.Z then Useskills("Blox Fruit", "Z") end
+    if _G.FruitSkills.X then Useskills("Blox Fruit", "X") end
+    if _G.FruitSkills.C then Useskills("Blox Fruit", "C") end
+    if _G.FruitSkills.V then Useskills("Blox Fruit", "V") end
+    if _G.FruitSkills.F then
+        VIM:SendKeyEvent(true,  "F", false, game)
+        VIM:SendKeyEvent(false, "F", false, game)
+    end
+end
+
+-- ════════════════════════════════════════════════
+-- STATS
+-- ════════════════════════════════════════════════
+statsSetings = function(stat, amount)
+    if plr.Data.Points.Value ~= 0 then
+        local map = { Melee="Melee", Defense="Defense", Sword="Sword", Gun="Gun", Devil="Demon Fruit" }
+        pcall(function() CommF_:InvokeServer("AddPoint", map[stat] or stat, amount or 1) end)
+    end
+end
+
+-- ════════════════════════════════════════════════
+-- KILL FUNCTIONS (tabela f)
+-- RandomCFrame usa delays maiores (0.3-0.5s) para evitar detecção
+-- ════════════════════════════════════════════════
+local function lockAndBring(mob)
+    local hrp = mob:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil end
+    if not mob:GetAttribute("Locked") then
+        mob:SetAttribute("Locked", hrp.CFrame)
+    end
+    PosMon = mob:GetAttribute("Locked").Position
+    _B = true
+    BringEnemy()
+    return hrp
+end
+
+local function randomJitter(hrp)
+    -- jitter aleatório em volta do mob para parecer movimento orgânico
+    -- delay aumentado (0.3s) = ~53 studs/s, bem abaixo do threshold
+    local function rv() return math.random(-25, 25) end
+    task.wait(0.3)  _tp(hrp.CFrame * CFrame.new(rv(), 30, rv()))
+    task.wait(0.3)  _tp(hrp.CFrame * CFrame.new(rv(), 30, rv()))
+    task.wait(0.35) _tp(hrp.CFrame * CFrame.new(rv(), 30, rv()))
+    task.wait(0.3)  _tp(hrp.CFrame * CFrame.new(rv(), 30, rv()))
+    task.wait(0.35) _tp(hrp.CFrame * CFrame.new(rv(), 30, rv()))
+end
+
+local f = {}
+
+f.Kill = function(mob, toggle)
+    if not (mob and toggle) then return end
+    local hrp = lockAndBring(mob) if not hrp then return end
+    EquipWeapon(_G.SelectWeapon)
+    local tool = char() and char():FindFirstChildOfClass("Tool")
+    if not tool then return end
+    if tool.ToolTip == "Blox Fruit" then
+        _tp((hrp.CFrame * CFrame.new(0, 10, 0)) * CFrame.Angles(0, math.rad(90), 0))
+    else
+        _tp((hrp.CFrame * CFrame.new(0, _G.MobHeight, 0)) * CFrame.Angles(0, math.rad(180), 0))
+    end
+    if RandomCFrame then randomJitter(hrp) end
+end
+
+f.Kill2 = function(mob, toggle)
+    if not (mob and toggle) then return end
+    local hrp = lockAndBring(mob) if not hrp then return end
+    EquipWeapon(_G.SelectWeapon)
+    local tool = char() and char():FindFirstChildOfClass("Tool")
+    if not tool then return end
+    if tool.ToolTip == "Blox Fruit" then
+        _tp((hrp.CFrame * CFrame.new(0, 10, 0)) * CFrame.Angles(0, math.rad(90), 0))
+    else
+        _tp((hrp.CFrame * CFrame.new(0, 20, 8)) * CFrame.Angles(0, math.rad(180), 0))
+    end
+    if RandomCFrame then randomJitter(hrp) end
+end
+
+f.KillSea = function(mob, toggle)
+    if not (mob and toggle) then return end
+    local hrp = lockAndBring(mob) if not hrp then return end
+    EquipWeapon(_G.SelectWeapon)
+    local tool = char() and char():FindFirstChildOfClass("Tool")
+    if not tool then return end
+    if tool.ToolTip == "Blox Fruit" then
+        _tp((hrp.CFrame * CFrame.new(0, 10, 0)) * CFrame.Angles(0, math.rad(90), 0))
+    else
+        -- Sea Beast: sobe gradualmente (stepped já cuida disso)
+        notween(hrp.CFrame * CFrame.new(0, 50, 8))
+        task.wait(0.85)
+        notween(hrp.CFrame * CFrame.new(0, 400, 0))
+        task.wait(1)
+    end
+end
+
+f.Sword = function(mob, toggle)
+    if not (mob and toggle) then return end
+    local hrp = lockAndBring(mob) if not hrp then return end
+    weaponSc("Sword")
+    _tp(hrp.CFrame * CFrame.new(0, 30, 0))
+    if RandomCFrame then randomJitter(hrp) end
+end
+
+f.Mas = function(mob, toggle)
+    if not (mob and toggle) then return end
+    local hrp = lockAndBring(mob) if not hrp then return end
+    if mob.Humanoid.Health <= HealthM then
+        _tp(hrp.CFrame * CFrame.new(0, 20, 0))
+        UseFruitSkills()
+    else
+        weaponSc("Melee")
+        _tp(hrp.CFrame * CFrame.new(0, 30, 0))
+    end
+end
+
+f.Masgun = function(mob, toggle)
+    if not (mob and toggle) then return end
+    local hrp = lockAndBring(mob) if not hrp then return end
+    if mob.Humanoid.Health <= HealthM then
+        _tp(hrp.CFrame * CFrame.new(0, 35, 8))
+        Useskills("Gun", "Z")
+        Useskills("Gun", "X")
+    else
+        weaponSc("Melee")
+        _tp(hrp.CFrame * CFrame.new(0, 30, 0))
+    end
+end
+
+-- ════════════════════════════════════════════════
+-- DADOS DO JOGO
+-- ════════════════════════════════════════════════
+local BOSSES = World1 and {
+    "The Gorilla King","Bobby","The Saw","Yeti","Mob Leader",
+    "Vice Admiral","Saber Expert","Warden","Chief Warden","Swan",
+    "Magma Admiral","Fishman Lord","Wysper","Thunder God",
+    "Cyborg","Ice Admiral","Greybeard",
+} or World2 and {
+    "Diamond","Jeremy","Fajita","Don Swan","Smoke Admiral",
+    "Awakened Ice Admiral","Tide Keeper","Darkbeard","Cursed Captain","Order",
+} or {
+    "Stone","Hydra Leader","Kilo Admiral","Captain Elephant",
+    "Beautiful Pirate","Cake Queen","Longma","Soul Reaper",
+}
+
+local w = {
+    ["Pirate Millionaire"]   = CFrame.new(-712.82727050781, 98.577049255371, 5711.9541015625),
+    ["Pistol Billionaire"]   = CFrame.new(-723.43316650391, 147.42906188965, 5931.9931640625),
+    ["Dragon Crew Warrior"]  = CFrame.new(7021.5043945312, 55.762702941895, -730.12908935547),
+    ["Dragon Crew Archer"]   = CFrame.new(6625, 378, 244),
+    ["Female Islander"]      = CFrame.new(4692.7939453125, 797.97668457031, 858.84802246094),
+    ["Venomous Assailant"]   = CFrame.new(4902, 670, 39),
+    ["Marine Commodore"]     = CFrame.new(2401, 123, -7589),
+    ["Marine Rear Admiral"]  = CFrame.new(3588, 229, -7085),
+    ["Fishman Raider"]       = CFrame.new(-10941, 332, -8760),
+    ["Fishman Captain"]      = CFrame.new(-11035, 332, -9087),
+    ["Forest Pirate"]        = CFrame.new(-13446, 413, -7760),
+    ["Mythological Pirate"]  = CFrame.new(-13510, 584, -6987),
+    ["Jungle Pirate"]        = CFrame.new(-11778, 426, -10592),
+    ["Musketeer Pirate"]     = CFrame.new(-13282, 496, -9565),
+    ["Reborn Skeleton"]      = CFrame.new(-8764, 142, 5963),
+    ["Living Zombie"]        = CFrame.new(-10227, 421, 6161),
+    ["Demonic Soul"]         = CFrame.new(-9579, 6, 6194),
+    ["Posessed Mummy"]       = CFrame.new(-9579, 6, 6194),
+    ["Peanut Scout"]         = CFrame.new(-1993, 187, -10103),
+    ["Peanut President"]     = CFrame.new(-2215, 159, -10474),
+    ["Ice Cream Chef"]       = CFrame.new(-877, 118, -11032),
+    ["Ice Cream Commander"]  = CFrame.new(-877, 118, -11032),
+    ["Cookie Crafter"]       = CFrame.new(-2021, 38, -12028),
+    ["Cake Guard"]           = CFrame.new(-2024, 38, -12026),
+    ["Baking Staff"]         = CFrame.new(-1932, 38, -12848),
+    ["Head Baker"]           = CFrame.new(-1932, 38, -12848),
+    ["Cocoa Warrior"]        = CFrame.new(95, 73, -12309),
+    ["Chocolate Bar Battler"]= CFrame.new(647, 42, -12401),
+    ["Sweet Thief"]          = CFrame.new(116, 36, -12478),
+    ["Candy Rebel"]          = CFrame.new(47, 61, -12889),
+    Ghost                    = CFrame.new(5251, 5, 1111),
+}
+
+local QUESTS = World1 and {
+    { lvl=1,   quest="Bandits",       mob="Bandit",              cfMob=CFrame.new(977,7,1582),       cfNPC=CFrame.new(971,7,1590)       },
+    { lvl=10,  quest="Monkeys",       mob="Monkey",              cfMob=CFrame.new(-1766,14,-3096),   cfNPC=CFrame.new(-1760,14,-3100)   },
+    { lvl=30,  quest="Pirates",       mob="Pirate",              cfMob=CFrame.new(-1306,4,312),      cfNPC=CFrame.new(-1300,4,318)      },
+    { lvl=60,  quest="DesertBandits", mob="Desert Bandit",       cfMob=CFrame.new(941,6,-2767),      cfNPC=CFrame.new(935,6,-2761)      },
+    { lvl=90,  quest="SnowBandits",   mob="Snow Bandit",         cfMob=CFrame.new(1239,9,-3011),     cfNPC=CFrame.new(1233,9,-3005)     },
+    { lvl=120, quest="Marines",       mob="Marine",              cfMob=CFrame.new(-4600,10,4068),    cfNPC=CFrame.new(-4594,10,4074)    },
+    { lvl=150, quest="SkyBandits",    mob="Sky Bandit",          cfMob=CFrame.new(-4852,3038,1999),  cfNPC=CFrame.new(-4846,3038,2005)  },
+    { lvl=190, quest="Prisoners",     mob="Prisoner",            cfMob=CFrame.new(4781,5,803),       cfNPC=CFrame.new(4775,5,809)       },
+    { lvl=250, quest="Colosseum",     mob="Toga Warrior",        cfMob=CFrame.new(5071,24,3828),     cfNPC=CFrame.new(5065,24,3834)    },
+    { lvl=300, quest="MagmaSoldiers", mob="Magma Soldier",       cfMob=CFrame.new(-4648,46,-881),    cfNPC=CFrame.new(-4642,46,-875)    },
+    { lvl=375, quest="Fishmen",       mob="Fishman Warrior",     cfMob=CFrame.new(61164,-1400,1819), cfNPC=CFrame.new(61158,-1400,1825) },
+    { lvl=450, quest="Zombies",       mob="Zombie",              cfMob=CFrame.new(61164,-1400,1819), cfNPC=CFrame.new(61158,-1400,1825) },
+    { lvl=575, quest="Dragons",       mob="Dragon",              cfMob=CFrame.new(-7100,25,-2770),   cfNPC=CFrame.new(-7094,25,-2764)   },
+    { lvl=625, quest="Mythological",  mob="Mythological Pirate", cfMob=w["Mythological Pirate"],     cfNPC=CFrame.new(-7094,25,-2764)   },
+} or World2 and {
+    { lvl=700,  quest="Area1",         mob="Raider",             cfMob=CFrame.new(-789,73,-3774),    cfNPC=CFrame.new(-783,73,-3768)    },
+    { lvl=775,  quest="Area2",         mob="Mercenary",          cfMob=CFrame.new(-789,73,-3774),    cfNPC=CFrame.new(-783,73,-3768)    },
+    { lvl=875,  quest="GreenBit1",     mob="Plant Subordinate",  cfMob=CFrame.new(-1887,22,-5018),   cfNPC=CFrame.new(-1881,22,-5012)   },
+    { lvl=950,  quest="Graveyard1",    mob="Zombie",             cfMob=CFrame.new(3775,24,-4313),    cfNPC=CFrame.new(3781,24,-4307)    },
+    { lvl=1000, quest="SnowMountain1", mob="Snow Trooper",       cfMob=CFrame.new(2117,214,-5229),   cfNPC=CFrame.new(2123,214,-5223)   },
+    { lvl=1100, quest="Hot1",          mob="Lab Subordinate",    cfMob=CFrame.new(441,157,-5462),    cfNPC=CFrame.new(447,157,-5456)    },
+    { lvl=1150, quest="Cold1",         mob="Horned Warrior",     cfMob=CFrame.new(441,157,-5462),    cfNPC=CFrame.new(447,157,-5456)    },
+    { lvl=1250, quest="Ship1",         mob="Ship Officer",       cfMob=CFrame.new(-4098,2,-5296),    cfNPC=CFrame.new(-4092,2,-5290)    },
+    { lvl=1350, quest="IceCastle1",    mob="Arctic Warrior",     cfMob=CFrame.new(-1500,4,-6500),    cfNPC=CFrame.new(-1494,4,-6494)    },
+    { lvl=1425, quest="Forgotten1",    mob="Sea Soldier",        cfMob=CFrame.new(0,5,-7000),        cfNPC=CFrame.new(6,5,-6994)        },
+} or {
+    { lvl=1500, quest="PortQuest1",    mob="Pirate Millionaire",  cfMob=w["Pirate Millionaire"],    cfNPC=CFrame.new(-706,98,5717)     },
+    { lvl=1575, quest="HydraQuest1",   mob="Dragon Crew Warrior", cfMob=w["Dragon Crew Warrior"],   cfNPC=CFrame.new(7027,55,-724)     },
+    { lvl=1650, quest="JungleQuest1",  mob="Jungle Pirate",       cfMob=w["Jungle Pirate"],         cfNPC=CFrame.new(-11772,426,-10586)},
+    { lvl=1700, quest="TreeQuest1",    mob="Marine Commodore",    cfMob=w["Marine Commodore"],      cfNPC=CFrame.new(2407,123,-7583)   },
+    { lvl=1775, quest="TurtleQuest1",  mob="Fishman Raider",      cfMob=w["Fishman Raider"],        cfNPC=CFrame.new(-10935,332,-8754) },
+    { lvl=1875, quest="HauntedQuest1", mob="Reborn Skeleton",     cfMob=w["Reborn Skeleton"],       cfNPC=CFrame.new(-8758,142,5969)   },
+    { lvl=1975, quest="HauntedQuest2", mob="Living Zombie",       cfMob=w["Living Zombie"],         cfNPC=CFrame.new(-10221,421,6167)  },
+    { lvl=2075, quest="CandyQuest1",   mob="Cookie Crafter",      cfMob=w["Cookie Crafter"],        cfNPC=CFrame.new(-2015,38,-12022)  },
+    { lvl=2150, quest="FactoryQuest1", mob="Baking Staff",        cfMob=w["Baking Staff"],          cfNPC=CFrame.new(-1926,38,-12842)  },
+    { lvl=2225, quest="TikiQuest1",    mob="Peanut Scout",        cfMob=w["Peanut Scout"],          cfNPC=CFrame.new(-1987,187,-10097) },
+    { lvl=2300, quest="UsoapQuest1",   mob="Forest Pirate",       cfMob=w["Forest Pirate"],         cfNPC=CFrame.new(-13440,413,-7754) },
+    { lvl=2375, quest="EliteQuest1",   mob="Musketeer Pirate",    cfMob=w["Musketeer Pirate"],      cfNPC=CFrame.new(-13276,496,-9559) },
+    { lvl=2475, quest="FinalQuest1",   mob="Mythological Pirate", cfMob=w["Mythological Pirate"],   cfNPC=CFrame.new(-13504,584,-6981) },
+}
+
+local ISLANDS = World1 and {
+    {name="Starter Island",  cf=CFrame.new(977,7,1582)},
+    {name="Jungle",          cf=CFrame.new(-1766,14,-3096)},
+    {name="Pirate Village",  cf=CFrame.new(-1306,4,312)},
+    {name="Desert",          cf=CFrame.new(941,6,-2767)},
+    {name="Frozen Village",  cf=CFrame.new(1239,9,-3011)},
+    {name="Middle Town",     cf=CFrame.new(0,6,700)},
+    {name="Marine Fortress", cf=CFrame.new(-4600,10,4068)},
+    {name="Skylands",        cf=CFrame.new(-4852,3038,1999)},
+    {name="Prison",          cf=CFrame.new(4781,5,803)},
+    {name="Colosseum",       cf=CFrame.new(5071,24,3828)},
+    {name="Magma Village",   cf=CFrame.new(-4648,46,-881)},
+    {name="Underwater City", cf=CFrame.new(61164,-1400,1819)},
+    {name="Dragon Land",     cf=CFrame.new(-7100,25,-2770)},
+} or World2 and {
+    {name="Kingdom of Rose", cf=CFrame.new(-789,73,-3774)},
+    {name="Green Zone",      cf=CFrame.new(-1887,22,-5018)},
+    {name="Graveyard",       cf=CFrame.new(3775,24,-4313)},
+    {name="Snow Mountain",   cf=CFrame.new(2117,214,-5229)},
+    {name="Hot & Cold",      cf=CFrame.new(441,157,-5462)},
+    {name="Cursed Ship",     cf=CFrame.new(-4098,2,-5296)},
+    {name="Forgotten Island",cf=CFrame.new(0,5,-7000)},
+    {name="Ice Castle",      cf=CFrame.new(-1500,4,-6500)},
+} or {
+    {name="Port Town",       cf=w["Pirate Millionaire"]},
+    {name="Hydra Island",    cf=w["Dragon Crew Warrior"]},
+    {name="Great Tree",      cf=w["Marine Commodore"]},
+    {name="Floating Turtle", cf=w["Fishman Raider"]},
+    {name="Haunted Castle",  cf=w["Reborn Skeleton"]},
+    {name="Candy Land",      cf=w["Cookie Crafter"]},
+    {name="Tiki Outpost",    cf=w["Peanut Scout"]},
+    {name="Mansion",         cf=w["Musketeer Pirate"]},
+}
+
+local AWAKEN_FRUITS = {"Flame","Ice","Quake","Light","Dark","String","Rumble","Magma","Human: Buddha","Sand","Bird: Phoenix","Dough"}
+local FIGHTING_STYLES = {"Combat","Dark Step","Electric","Water Kung Fu","Dragon Breath","Superhuman","Death Step","Sharkman Karate","Electric Claw","Dragon Talon","Godhuman","Sanguine Art","Fishman Karate"}
+local SWORDS = {"Dark Blade","Rengoku","Pole (2nd form)","Tushita","Yama","Cursed Dual Katana","Buddy Sword","Hallow Scythe","Canvander","True Triple Katana","Jitte","Shark Anchor","Fox Lamp","Leviathan Blade","Trident"}
+local GUNS   = {"Flintlock","Musket","Cannon","Bazooka","Refined Slingshot","Kabucha","Acidum Rifle","Serpent Bow","Soul Guitar","Electric Guitar","Slingshot","Corrupted Slingshot","Diable Rifle","Haki Rifle"}
+
+-- ════════════════════════════════════════════════
+-- SISTEMA DE PRIORIDADE (exclusive vs passive)
+-- ════════════════════════════════════════════════
+local ExThread = nil
+local ExName   = nil
+local ExPrio   = 999
+local PassiveThreads = {}
+
+local function stopExclusive()
+    if ExThread then pcall(task.cancel, ExThread) end
+    ExThread = nil ExName = nil ExPrio = 999 _B = false
+end
+
+local function startExclusive(name, prio, fn)
+    if prio <= ExPrio then
+        stopExclusive()
+        ExName = name ExPrio = prio
+        ExThread = task.spawn(fn)
+        return true
+    end
+    return false
+end
+
+local function stopPassive(name)
+    if PassiveThreads[name] then
+        pcall(task.cancel, PassiveThreads[name])
+        PassiveThreads[name] = nil
+    end
+end
+
+local function startPassive(name, fn)
+    stopPassive(name)
+    PassiveThreads[name] = task.spawn(fn)
+end
+
+local function disableExclusive(name)
+    if ExName == name then stopExclusive() end
+end
+
+-- ════════════════════════════════════════════════
+-- HELPERS
+-- ════════════════════════════════════════════════
+local function getBestQuest()
+    local lv, best = level(), nil
+    for _, q in ipairs(QUESTS) do
+        if q.lvl <= lv then best = q end
+    end
+    return best
+end
+
+local function findMob(name)
+    for _, mob in ipairs(workspace.Enemies:GetChildren()) do
+        if mob.Name == name then
+            local hm = mob:FindFirstChildOfClass("Humanoid")
+            if hm and hm.Health > 0 then return mob end
+        end
+    end
+end
+
+local function findBoss(name)
+    local mob = findMob(name)
+    if mob then return mob end
+    for _, v in ipairs(workspace:GetChildren()) do
+        if v:IsA("Model") and v.Name == name then
+            local hm = v:FindFirstChildOfClass("Humanoid")
+            if hm and hm.Health > 0 then return v end
+        end
+    end
+end
+
+-- ════════════════════════════════════════════════
+-- ESTADO DA UI
+-- ════════════════════════════════════════════════
+local S = {
+    SelectedBoss   = BOSSES and BOSSES[1] or "",
+    StatPriority   = "Melee",
+    WeaponName     = "",
+    MasteryType    = "Fruit",
+    SelectedIsland = ISLANDS and ISLANDS[1] and ISLANDS[1].name or "",
+    KillRange      = 40,
+}
+
+-- ════════════════════════════════════════════════
+-- FEATURES EXCLUSIVAS
+-- ════════════════════════════════════════════════
+local function setSeaBeast(on)
+    if not on then disableExclusive("SeaBeast") return end
+    local targets = {"Sea Beast","Leviathan","Terrorshark","Sea Monster","Island Empress"}
+    startExclusive("SeaBeast", 1, function()
+        while ExName == "SeaBeast" do
+            if alive() then
+                local found
+                for _, name in ipairs(targets) do
+                    found = workspace:FindFirstChild(name) or workspace.Enemies:FindFirstChild(name)
+                    if found then break end
+                end
+                if found then f.KillSea(found, true) end
+            end
+            task.wait(0.5)
+        end
+    end)
+end
+
+local function setAutoRaid(on)
+    if not on then disableExclusive("AutoRaid") return end
+    startExclusive("AutoRaid", 2, function()
+        while ExName == "AutoRaid" do
+            if alive() then
+                for _, mob in ipairs(workspace.Enemies:GetChildren()) do
+                    local hm = mob:FindFirstChildOfClass("Humanoid")
+                    if hm and hm.Health > 0 then f.Kill(mob, true) break end
+                end
+            end
+            task.wait(0.15)
+        end
+    end)
+end
+
+local function setAutoBoss(on)
+    if not on then disableExclusive("AutoBoss") return end
+    startExclusive("AutoBoss", 3, function()
+        while ExName == "AutoBoss" do
+            if alive() then
+                local boss = findBoss(S.SelectedBoss)
+                if boss then f.Kill2(boss, true) end
+            end
+            task.wait(0.2)
+        end
+    end)
+end
+
+local function setAutoFarm(on)
+    if not on then disableExclusive("AutoFarm") return end
+    startExclusive("AutoFarm", 4, function()
+        while ExName == "AutoFarm" do
+            if not alive() then task.wait(1) continue end
+            local q = getBestQuest()
+            if not q then task.wait(2) continue end
+            -- TP até o NPC da quest em passos (não instantâneo)
+            _tp(q.cfNPC)
+            task.wait(0.4)
+            invoke("StartQuest", q.quest)
+            task.wait(0.35)
+            local mob = findMob(q.mob)
+            if mob then
+                f.Kill(mob, true)
+            else
+                _tp(q.cfMob)
+                task.wait(1)
+            end
+            -- Atualiza MousePos para o hook namecall
+            local hrp = mob and mob:FindFirstChild("HumanoidRootPart")
+            if hrp then MousePos = hrp.Position end
+            task.wait(0.1)
+        end
+    end)
+end
+
+local function setMasteryFarm(on, mtype)
+    if not on then disableExclusive("Mastery") return end
+    local fn = (mtype == "Gun") and f.Masgun or f.Mas
+    startExclusive("Mastery", 5, function()
+        while ExName == "Mastery" do
+            if not alive() then task.wait(1) continue end
+            local q = getBestQuest()
+            if not q then task.wait(2) continue end
+            local mob = findMob(q.mob)
+            if mob then fn(mob, true) end
+            task.wait(0.1)
+        end
+    end)
+end
+
+-- ════════════════════════════════════════════════
+-- FEATURES PASSIVAS
+-- ════════════════════════════════════════════════
+local function setAutoKen(on)
+    if not on then stopPassive("Ken") _G.AutoKen=false return end
+    _G.AutoKen = true
+    startPassive("Ken", function()
+        while _G.AutoKen do
+            task.wait(0.2)
+            pcall(function()
+                local c = char()
+                if c and not CollectionService:HasTag(c, "Ken") then
+                    CommE:FireServer("Ken", true)
+                end
+            end)
+        end
+    end)
+end
+
+local function setAutoHaki(on)
+    if not on then stopPassive("Haki") return end
+    startPassive("Haki", function()
+        while PassiveThreads["Haki"] do
+            pcall(function() CommE:FireServer("Haki", true) end)
+            task.wait(12)
+        end
+    end)
+end
+
+local function setAutoStats(on)
+    if not on then stopPassive("Stats") return end
+    startPassive("Stats", function()
+        while PassiveThreads["Stats"] do
+            pcall(function() statsSetings(S.StatPriority, 1) end)
+            task.wait(0.8)
+        end
+    end)
+end
+
+local function setKillAura(on)
+    if not on then stopPassive("KillAura") return end
+    startPassive("KillAura", function()
+        while PassiveThreads["KillAura"] do
+            if alive() then
+                local r = Root()
+                if r then
+                    for _, mob in ipairs(workspace.Enemies:GetChildren()) do
+                        local hm = mob:FindFirstChildOfClass("Humanoid")
+                        local pp = mob:FindFirstChild("HumanoidRootPart")
+                        if hm and hm.Health > 0 and pp then
+                            if (r.Position - pp.Position).Magnitude <= S.KillRange then
+                                f.Kill(mob, true) break
+                            end
+                        end
+                    end
+                end
+            end
+            task.wait(0.1)
+        end
+    end)
+end
+
+local function setAntiAFK(on)
+    if not on then stopPassive("AntiAFK") return end
+    startPassive("AntiAFK", function()
+        while PassiveThreads["AntiAFK"] do
+            task.wait(55)
+            pcall(function()
+                VIM:SendKeyEvent(true,  Enum.KeyCode.Space, false, game)
+                task.wait(0.1)
+                VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+            end)
+        end
+    end)
+end
+
+-- Terror Shark ESP
+local function setTerrorESP(on)
+    if not on then
+        for _, v in ipairs(workspace:GetDescendants()) do
+            local e = v:FindFirstChild("ZH_ESP") if e then e:Destroy() end
+        end
+        stopPassive("TerrorESP") return
+    end
+    startPassive("TerrorESP", function()
+        while PassiveThreads["TerrorESP"] do
+            for _, v in ipairs(workspace:GetChildren()) do
+                if v:IsA("Model") and v.Name:lower():find("terrorshark") then
+                    if not v:FindFirstChild("ZH_ESP") then
+                        local hl = Instance.new("Highlight")
+                        hl.Name="ZH_ESP" hl.FillColor=Color3.fromRGB(255,50,50)
+                        hl.OutlineColor=Color3.fromRGB(255,255,255)
+                        hl.FillTransparency=0.5 hl.Parent=v
+                    end
+                end
+            end
+            task.wait(2)
+        end
+    end)
+end
+
+-- ════════════════════════════════════════════════
+-- FLY / NOCLIP / INF JUMP
+-- ════════════════════════════════════════════════
+local FlyVel, FlyGyro, IJConn
+
+local function setFly(on)
+    if on then
+        local r = Root() if not r then return end
+        FlyVel = Instance.new("BodyVelocity")
+        FlyVel.MaxForce=Vector3.new(1e9,1e9,1e9) FlyVel.Velocity=Vector3.zero FlyVel.Parent=r
+        FlyGyro = Instance.new("BodyGyro")
+        FlyGyro.MaxTorque=Vector3.new(1e9,1e9,1e9) FlyGyro.P=1e4 FlyGyro.CFrame=r.CFrame FlyGyro.Parent=r
+        local h=hum() if h then h.PlatformStand=true end
+        startPassive("Fly", function()
+            local cam = workspace.CurrentCamera
+            while PassiveThreads["Fly"] do
+                local r2 = Root()
+                if r2 and FlyVel and FlyVel.Parent then
+                    local spd, mv = 60, Vector3.zero
+                    local cf = cam.CFrame
+                    if UIS:IsKeyDown(Enum.KeyCode.W)            then mv+=cf.LookVector*spd end
+                    if UIS:IsKeyDown(Enum.KeyCode.S)            then mv-=cf.LookVector*spd end
+                    if UIS:IsKeyDown(Enum.KeyCode.A)            then mv-=cf.RightVector*spd end
+                    if UIS:IsKeyDown(Enum.KeyCode.D)            then mv+=cf.RightVector*spd end
+                    if UIS:IsKeyDown(Enum.KeyCode.Space)        then mv+=Vector3.new(0,spd,0) end
+                    if UIS:IsKeyDown(Enum.KeyCode.LeftControl)  then mv-=Vector3.new(0,spd,0) end
+                    FlyVel.Velocity=mv
+                    FlyGyro.CFrame=CFrame.new(r2.Position, r2.Position+cf.LookVector)
+                end
+                task.wait(0.03)
+            end
+        end)
+    else
+        stopPassive("Fly")
+        if FlyVel  then FlyVel:Destroy()  FlyVel=nil  end
+        if FlyGyro then FlyGyro:Destroy() FlyGyro=nil end
+        local h=hum() if h then h.PlatformStand=false end
+    end
+end
+
+local function setNoClip(on)
+    if not on then stopPassive("NoClip") return end
+    startPassive("NoClip", function()
+        while PassiveThreads["NoClip"] do
+            local c=char()
+            if c then
+                for _,p in ipairs(c:GetDescendants()) do
+                    if p:IsA("BasePart") then p.CanCollide=false end
+                end
+            end
+            task.wait(0.1)
+        end
+    end)
+end
+
+local function setInfJump(on)
+    if IJConn then IJConn:Disconnect() IJConn=nil end
+    if on then
+        IJConn = UIS.JumpRequest:Connect(function()
+            local h=hum() if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end
+        end)
+    end
+end
+
+-- ════════════════════════════════════════════════
+-- SPLASH SCREEN
+-- ════════════════════════════════════════════════
+local function showSplash()
+    pcall(function()
+        local sg = Instance.new("ScreenGui")
+        sg.Name="ZenithSplash" sg.IgnoreGuiInset=true sg.ResetOnSpawn=false sg.Parent=plr.PlayerGui
+        local bg = Instance.new("Frame", sg)
+        bg.Size=UDim2.fromScale(1,1) bg.BackgroundColor3=Color3.fromRGB(10,10,18)
+        bg.BackgroundTransparency=1 bg.BorderSizePixel=0
+        local blur = Instance.new("BlurEffect", Lighting) blur.Size=0
+        local function tw(o,t,p) TweenService:Create(o,TweenInfo.new(t,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),p):Play() end
+        tw(bg,0.5,{BackgroundTransparency=0}) tw(blur,0.5,{Size=16}) task.wait(0.5)
+        local card = Instance.new("Frame", bg)
+        card.AnchorPoint=Vector2.new(0.5,0.5) card.Position=UDim2.fromScale(0.5,0.55)
+        card.Size=UDim2.fromOffset(420,200) card.BackgroundColor3=Color3.fromRGB(15,15,25)
+        card.BackgroundTransparency=1 card.BorderSizePixel=0
+        Instance.new("UICorner",card).CornerRadius=UDim.new(0,16)
+        local stroke=Instance.new("UIStroke",card) stroke.Color=Color3.fromRGB(80,120,255)
+        stroke.Thickness=1.5 stroke.Transparency=1
+        TweenService:Create(card,TweenInfo.new(0.6,Enum.EasingStyle.Back,Enum.EasingDirection.Out),{BackgroundTransparency=0}):Play()
+        tw(stroke,0.6,{Transparency=0})
+        local function mkL(pos,text,font,size,col)
+            local l=Instance.new("TextLabel",card)
+            l.AnchorPoint=Vector2.new(0.5,0) l.Position=UDim2.fromOffset(210,pos)
+            l.Size=UDim2.fromOffset(400,30) l.BackgroundTransparency=1
+            l.Text=text l.Font=font l.TextSize=size l.TextColor3=col l.TextTransparency=1
+            return l
+        end
+        local t1=mkL(30,"ZENITH HUB",Enum.Font.GothamBold,30,Color3.fromRGB(255,255,255))
+        local t2=mkL(72,"Blox Fruits  •  v3.0  •  World "..WORLD,Enum.Font.Gotham,13,Color3.fromRGB(150,150,200))
+        local t3=mkL(95,"Stealth Mode Ativo",Enum.Font.Gotham,11,Color3.fromRGB(80,200,120))
+        local barBg=Instance.new("Frame",card)
+        barBg.AnchorPoint=Vector2.new(0.5,0) barBg.Position=UDim2.fromOffset(210,130)
+        barBg.Size=UDim2.fromOffset(340,4) barBg.BackgroundColor3=Color3.fromRGB(30,30,50)
+        barBg.BackgroundTransparency=1 barBg.BorderSizePixel=0
+        Instance.new("UICorner",barBg).CornerRadius=UDim.new(1,0)
+        local fill=Instance.new("Frame",barBg)
+        fill.Size=UDim2.fromScale(0,1) fill.BackgroundColor3=Color3.fromRGB(80,120,255)
+        fill.BorderSizePixel=0 Instance.new("UICorner",fill).CornerRadius=UDim.new(1,0)
+        task.wait(0.3)
+        for _,item in ipairs({t1,t2,t3}) do tw(item,0.4,{TextTransparency=0}) end
+        tw(barBg,0.4,{BackgroundTransparency=0}) task.wait(0.4)
+        TweenService:Create(fill,TweenInfo.new(1.8,Enum.EasingStyle.Quart,Enum.EasingDirection.Out),{Size=UDim2.fromScale(1,1)}):Play()
+        task.wait(2) tw(bg,0.5,{BackgroundTransparency=1}) tw(blur,0.5,{Size=0}) task.wait(0.6)
+        sg:Destroy() blur:Destroy()
+    end)
+end
+
+-- ════════════════════════════════════════════════
+-- FLUENT UI
+-- ════════════════════════════════════════════════
+local Fluent, SaveManager, InterfaceManager
+
+local function loadFluent()
+    Fluent           = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+    SaveManager      = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/SaveManager.lua"))()
+    InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/InterfaceManager.lua"))()
+end
+
+local function buildUI()
+    local W = Fluent:CreateWindow({
+        Title       = "Zenith Hub",
+        SubTitle    = "Blox Fruits  •  v3.0  •  World "..WORLD,
+        TabWidth    = 148,
+        Size        = UDim2.fromOffset(620, 480),
+        Acrylic     = true,
+        Theme       = "Dark",
+        MinimizeKey = Enum.KeyCode.RightControl,
+    })
+
+    local function N(title, text, dur, style)
+        pcall(Fluent.Notify, Fluent, {Title=title, Content=text, Duration=dur or 3, Style=style or "Info"})
+    end
+
+    local T = {}
+    T.Farm      = W:AddTab({Title="Main Farm",   Icon="home"      })
+    T.Bosses    = W:AddTab({Title="Bosses",       Icon="skull"     })
+    T.Sea       = W:AddTab({Title="Sea Events",   Icon="anchor"    })
+    T.Mastery   = W:AddTab({Title="Mastery",      Icon="book-open" })
+    T.Player    = W:AddTab({Title="Player",       Icon="user"      })
+    T.Teleports = W:AddTab({Title="Teleports",    Icon="map-pin"   })
+    T.Visuals   = W:AddTab({Title="Visuals",      Icon="eye"       })
+    T.Settings  = W:AddTab({Title="Settings",     Icon="settings"  })
+
+    -- ══ TAB: MAIN FARM ═════════════════════════
+    pcall(function()
+        T.Farm:AddSection("Auto Farm")
+        T.Farm:AddToggle("AutoFarm", {Title="Auto Farm (por Level)", Default=false, Callback=function(v)
+            setAutoFarm(v) N("Auto Farm", v and "Ativado!" or "Off.", 2, v and "Success" or "Info")
+        end})
+        T.Farm:AddToggle("KillAura", {Title="Kill Aura", Default=false, Callback=function(v)
+            setKillAura(v)
+        end})
+        T.Farm:AddSlider("KillRange", {Title="Kill Aura Range", Min=5, Max=120, Default=40, Rounding=0, Callback=function(v)
+            S.KillRange = v
+        end})
+
+        T.Farm:AddSection("Stats & Haki")
+        T.Farm:AddDropdown("StatPrio", {Title="Stat Priority", Values={"Melee","Defense","Sword","Gun","Devil"}, Default="Melee", Callback=function(v)
+            S.StatPriority = v
+        end})
+        T.Farm:AddToggle("AutoStats", {Title="Auto Stats", Default=false, Callback=function(v)
+            setAutoStats(v)
+        end})
+        T.Farm:AddToggle("AutoHaki", {Title="Auto Armamento (Buso)", Default=false, Callback=function(v)
+            setAutoHaki(v)
+        end})
+        T.Farm:AddToggle("AutoKen", {Title="Auto Observation (Ken)", Default=false, Callback=function(v)
+            setAutoKen(v)
+        end})
+
+        T.Farm:AddSection("Arma & Stealth")
+        T.Farm:AddDropdown("WeaponSel", {Title="Arma Selecionada", Values={"(Nenhuma)", table.unpack(SWORDS)}, Default="(Nenhuma)", Callback=function(v)
+            _G.SelectWeapon = v ~= "(Nenhuma)" and v or nil
+        end})
+        T.Farm:AddButton({Title="Set Marines", Callback=function() invoke("SetTeam","Marines") N("Team","Marines",2) end})
+        T.Farm:AddButton({Title="Set Pirates",  Callback=function() invoke("SetTeam","Pirates") N("Team","Pirates",2) end})
+
+        T.Farm:AddSection("Anti-Detecção (Stealth)")
+        T.Farm:AddToggle("RandomCF", {Title="Random CFrame (jitter)", Default=false, Callback=function(v)
+            RandomCFrame = v
+        end})
+        T.Farm:AddToggle("UseTw", {Title="Usar TweenService (movimento suave)", Default=false, Callback=function(v)
+            UseTween = v
+        end})
+        T.Farm:AddSlider("StepSize", {Title="Tamanho do Passo (studs)", Min=30, Max=200, Default=75, Rounding=0, Callback=function(v)
+            TP_STEP_SIZE = v
+        end})
+        T.Farm:AddSlider("StepDelay", {Title="Delay entre Passos (ms)", Min=30, Max=200, Default=70, Rounding=0, Callback=function(v)
+            TP_STEP_DELAY = v / 1000
+        end})
+        T.Farm:AddSlider("MobH", {Title="Mob Height", Min=5, Max=60, Default=20, Rounding=0, Callback=function(v)
+            _G.MobHeight = v
+        end})
+        T.Farm:AddToggle("AimSkillT", {Title="Aim Skill (spoof MousePos)", Default=false, Callback=function(v)
+            _G.AimSkill = v
+        end})
+    end)
+
+    -- ══ TAB: BOSSES ════════════════════════════
+    pcall(function()
+        T.Bosses:AddSection("Boss Farm — World "..WORLD)
+        T.Bosses:AddDropdown("BossSel", {Title="Boss Alvo", Values=BOSSES, Default=BOSSES[1], Callback=function(v)
+            S.SelectedBoss = v
+        end})
+        T.Bosses:AddToggle("AutoBoss", {Title="Auto Boss", Default=false, Callback=function(v)
+            setAutoBoss(v) N("Boss", v and "→ "..S.SelectedBoss or "Off.", 3)
+        end})
+        T.Bosses:AddButton({Title="Teleportar ao Boss", Callback=function()
+            local boss = findBoss(S.SelectedBoss)
+            if boss then
+                local hrp = boss:FindFirstChild("HumanoidRootPart")
+                if hrp then _tp(hrp.CFrame * CFrame.new(0,20,0)) end
+            else
+                N("Boss","Não encontrado no mapa.",3,"Warning")
+            end
+        end})
+    end)
+
+    -- ══ TAB: SEA EVENTS ════════════════════════
+    pcall(function()
+        T.Sea:AddSection("Sea Beast / Terrorshark")
+        T.Sea:AddToggle("AutoSea", {Title="Auto Sea Beast", Default=false, Callback=function(v)
+            setSeaBeast(v) N("Sea Beast", v and "Ativado!" or "Off.", 2)
+        end})
+        T.Sea:AddToggle("TerrorESP", {Title="Terrorshark ESP", Default=false, Callback=function(v)
+            setTerrorESP(v)
+        end})
+        T.Sea:AddSection("Auto Raid")
+        T.Sea:AddToggle("AutoRaid", {Title="Auto Raid (mobs)", Default=false, Callback=function(v)
+            setAutoRaid(v)
+        end})
+    end)
+
+    -- ══ TAB: MASTERY ═══════════════════════════
+    pcall(function()
+        T.Mastery:AddSection("Fruit Mastery")
+        T.Mastery:AddToggle("MasFruit_Z", {Title="Skill Z", Default=false, Callback=function(v) _G.FruitSkills.Z=v end})
+        T.Mastery:AddToggle("MasFruit_X", {Title="Skill X", Default=false, Callback=function(v) _G.FruitSkills.X=v end})
+        T.Mastery:AddToggle("MasFruit_C", {Title="Skill C", Default=false, Callback=function(v) _G.FruitSkills.C=v end})
+        T.Mastery:AddToggle("MasFruit_V", {Title="Skill V", Default=false, Callback=function(v) _G.FruitSkills.V=v end})
+        T.Mastery:AddToggle("MasFruit_F", {Title="Skill F (Transform)", Default=false, Callback=function(v) _G.FruitSkills.F=v end})
+        T.Mastery:AddSlider("HealthMas", {Title="Mudar p/ Fruta quando HP ≤", Min=100, Max=5000, Default=500, Rounding=0, Callback=function(v)
+            HealthM = v
+        end})
+        T.Mastery:AddSection("Modo")
+        T.Mastery:AddDropdown("MasType", {Title="Tipo de Mastery", Values={"Fruit","Gun"}, Default="Fruit", Callback=function(v)
+            S.MasteryType = v
+        end})
+        T.Mastery:AddToggle("AutoMas", {Title="Auto Mastery Farm", Default=false, Callback=function(v)
+            setMasteryFarm(v, S.MasteryType)
+            N("Mastery", v and "Ativado!" or "Off.", 2)
+        end})
+    end)
+
+    -- ══ TAB: PLAYER ════════════════════════════
+    pcall(function()
+        T.Player:AddSection("Movimentação")
+        T.Player:AddToggle("Fly",     {Title="Fly",          Default=false, Callback=function(v) setFly(v) end})
+        T.Player:AddToggle("NoClip",  {Title="No Clip",      Default=false, Callback=function(v) setNoClip(v) end})
+        T.Player:AddToggle("InfJump", {Title="Infinite Jump", Default=false, Callback=function(v) setInfJump(v) end})
+        T.Player:AddSection("Utilidades")
+        T.Player:AddToggle("AntiAFK", {Title="Anti AFK", Default=true, Callback=function(v)
+            setAntiAFK(v)
+        end})
+        T.Player:AddButton({Title="Respawn Personagem", Callback=function()
+            plr:LoadCharacter()
+        end})
+    end)
+
+    -- ══ TAB: TELEPORTS ═════════════════════════
+    pcall(function()
+        T.Teleports:AddSection("Ilhas — World "..WORLD)
+        local isleNames = {}
+        for _, isle in ipairs(ISLANDS) do isleNames[#isleNames+1] = isle.name end
+        T.Teleports:AddDropdown("IsleSel", {Title="Ilha Destino", Values=isleNames, Default=isleNames[1], Callback=function(v)
+            S.SelectedIsland = v
+        end})
+        T.Teleports:AddButton({Title="Teleportar", Callback=function()
+            for _, isle in ipairs(ISLANDS) do
+                if isle.name == S.SelectedIsland then
+                    _tp(isle.cf)
+                    N("Teleport","→ "..isle.name, 2)
+                    break
+                end
+            end
+        end})
+        T.Teleports:AddSection("Locais Rápidos")
+        T.Teleports:AddButton({Title="Void (Fantasma Ghost)", Callback=function()
+            _tp(w.Ghost)
+        end})
+    end)
+
+    -- ══ TAB: VISUALS ═══════════════════════════
+    pcall(function()
+        T.Visuals:AddSection("Iluminação")
+        T.Visuals:AddToggle("FullBright", {Title="Full Bright", Default=true, Callback=function(v)
+            if v then
+                Lighting.Brightness=2 Lighting.Ambient=Color3.new(0.695,0.695,0.695)
+            else
+                Lighting.Brightness=1 Lighting.Ambient=Color3.new(0,0,0)
+            end
+        end})
+        T.Visuals:AddSection("Câmera")
+        T.Visuals:AddSlider("FOV", {Title="Field of View", Min=70, Max=120, Default=70, Rounding=0, Callback=function(v)
+            workspace.CurrentCamera.FieldOfView = v
+        end})
+    end)
+
+    -- ══ TAB: SETTINGS ══════════════════════════
+    pcall(function()
+        T.Settings:AddSection("Save / Load")
+        SaveManager:SetLibrary(Fluent)
+        InterfaceManager:SetLibrary(Fluent)
+        SaveManager:IgnoreThemeSettings()
+        SaveManager:SetFolder("ZenithHub")
+        SaveManager:BuildConfigSection(T.Settings)
+        InterfaceManager:BuildInterfaceSection(T.Settings)
+    end)
+
+    -- Ativa Anti-AFK por padrão
+    setAntiAFK(true)
+end
+
+-- ════════════════════════════════════════════════
+-- MAIN
+-- ════════════════════════════════════════════════
+task.spawn(showSplash)
+task.wait(0.5)
+loadFluent()
+buildUI()
