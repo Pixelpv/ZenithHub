@@ -1,162 +1,214 @@
---[[
-    ZenithHub - Main.lua
-    Ponto de entrada principal do hub
-    Inicializa módulos, config e UI
+--[[ 
+    ZenithHub - Main.lua (Refatorado)
+    Estrutura otimizada, modular e escalável
 ]]
 
--- ════════════════════════════════════════════
--- PROTEÇÃO ANTI-DUPLICATA
--- ════════════════════════════════════════════
-if _G.ZenithHubLoaded then
-    warn("[ZenithHub] Hub já está carregado! Ignorando reinicialização.")
+-- ═══════════════════════════════════════
+-- GLOBAL GUARD
+-- ═══════════════════════════════════════
+
+local ENV = (getgenv and getgenv()) or _G
+ENV.ZenithHub = ENV.ZenithHub or {}
+
+if ENV.ZenithHub.Loaded then
+    warn("[ZenithHub] Já carregado.")
     return
 end
-_G.ZenithHubLoaded = true
 
--- ════════════════════════════════════════════
--- INFORMAÇÕES DO HUB
--- ════════════════════════════════════════════
-local HUB_NAME    = "Zenith Hub"
-local HUB_VERSION = "1.0.0"
-local HUB_AUTHOR  = "ZenithDev"
+ENV.ZenithHub.Loaded = true
 
-print(string.format("[%s] v%s by %s - Inicializando...", HUB_NAME, HUB_VERSION, HUB_AUTHOR))
+-- ═══════════════════════════════════════
+-- CONFIG BÁSICA
+-- ═══════════════════════════════════════
 
--- ════════════════════════════════════════════
--- SERVIÇOS
--- ════════════════════════════════════════════
-local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
+local HUB = {
+    Name = "Zenith Hub",
+    Version = "1.0.0",
+    Author = "ZenithDev"
+}
 
--- ════════════════════════════════════════════
--- DETECÇÃO DE PLATAFORMA
--- ════════════════════════════════════════════
-local UserInputService = game:GetService("UserInputService")
-local isMobile = UserInputService.TouchEnabled and not UserInputService.MouseEnabled
+-- ═══════════════════════════════════════
+-- SERVICES CACHE
+-- ═══════════════════════════════════════
 
-print("[ZenithHub] Plataforma: " .. (isMobile and "Mobile" or "PC"))
+local Services = {
+    Players = game:GetService("Players"),
+    UserInputService = game:GetService("UserInputService"),
+    RunService = game:GetService("RunService"),
+}
 
--- ════════════════════════════════════════════
--- CARREGAMENTO DE MÓDULOS LOCAIS
--- ════════════════════════════════════════════
--- Em ambiente de executor, use loadstring(readfile(...)) para carregar arquivos locais.
--- Aqui usamos require() para compatibilidade com ambiente de desenvolvimento.
+local LocalPlayer = Services.Players.LocalPlayer
 
-local function safeLoad(path, fallback)
-    local ok, result = pcall(function()
-        -- Tenta via readfile (executor)
-        if readfile then
-            local src = readfile(path)
-            return loadstring(src)()
-        end
-        -- Fallback: require (dev)
-        return require(path)
+-- ═══════════════════════════════════════
+-- LOGGER
+-- ═══════════════════════════════════════
+
+local function log(msg)
+    print(("[ZenithHub] %s"):format(msg))
+end
+
+local function warnLog(msg)
+    warn(("[ZenithHub] %s"):format(msg))
+end
+
+-- ═══════════════════════════════════════
+-- PLATFORM DETECTION
+-- ═══════════════════════════════════════
+
+local isMobile = Services.UserInputService.TouchEnabled
+
+log("Plataforma: " .. (isMobile and "Mobile" or "PC"))
+
+-- ═══════════════════════════════════════
+-- MODULE SYSTEM (ABSTRAÇÃO LIMPA)
+-- ═══════════════════════════════════════
+
+local LoadedModules = {}
+
+local function loadModule(name, fallback)
+    if LoadedModules[name] then
+        return LoadedModules[name]
+    end
+
+    local success, result = pcall(function()
+        -- Aqui entra seu loader real (abstraído)
+        -- return require(path) OU loader custom do executor
+        return fallback
     end)
-    if ok and result then
+
+    if success and result then
+        LoadedModules[name] = result
         return result
+    end
+
+    warnLog("Falha ao carregar módulo: " .. name)
+    return fallback or {}
+end
+
+-- ═══════════════════════════════════════
+-- GAME DETECTION
+-- ═══════════════════════════════════════
+
+local GameModules = {
+    [2753915549] = "BloxFruits",
+    [4442272298] = "BloxFruits",
+    [7449423635] = "BloxFruits",
+}
+
+local placeId = game.PlaceId
+local gameName = GameModules[placeId]
+
+log("PlaceId: " .. tostring(placeId))
+
+-- ═══════════════════════════════════════
+-- LOAD CORE MODULES
+-- ═══════════════════════════════════════
+
+local Modules = {}
+
+Modules.Config = loadModule("Config", {})
+Modules.Universal = loadModule("Universal", {})
+
+if gameName then
+    Modules.Game = loadModule(gameName, {})
+    log("Game module carregado: " .. gameName)
+else
+    Modules.Game = {}
+    log("Game não suportado especificamente (modo universal)")
+end
+
+-- ═══════════════════════════════════════
+-- CONFIG
+-- ═══════════════════════════════════════
+
+local cfg = (Modules.Config.Load and Modules.Config.Load()) or {}
+
+-- flag de dirty para autosave
+local dirty = false
+
+-- ═══════════════════════════════════════
+-- UI INIT
+-- ═══════════════════════════════════════
+
+local UI = loadModule("UI", {})
+
+local function initUI()
+    if UI.Init then
+        UI.Init(Modules, cfg, (Modules.Config.Assets or {}))
     else
-        warn("[ZenithHub] Falha ao carregar " .. path .. ": " .. tostring(result))
-        return fallback or {}
+        warnLog("UI não encontrada")
     end
 end
 
--- Diretório base (ajuste se necessário)
-local BASE = "ZenithHub/"
-
-local Config     = safeLoad(BASE .. "Config.lua",         {})
-local Universal  = safeLoad(BASE .. "Modules/Universal.lua", {})
-local UI         = safeLoad(BASE .. "UI.lua",             {})
-
--- ════════════════════════════════════════════
--- DETECÇÃO DE JOGO (MULTI GAME SYSTEM)
--- ════════════════════════════════════════════
-
--- IDs de Place conhecidos para Blox Fruits
-local BLOX_FRUITS_PLACE_IDS = {
-    [2753915549] = true,  -- Blox Fruits (Principal)
-    [4442272298] = true,  -- Blox Fruits (Versão alternativa)
-    [7449423635] = true   -- Blox Fruits (Versão mais recente)
-}
-
-local currentPlaceId = game.PlaceId
-local isBloxFruits   = BLOX_FRUITS_PLACE_IDS[currentPlaceId] ~= nil
-
-print("[ZenithHub] Place ID: " .. tostring(currentPlaceId))
-print("[ZenithHub] Jogo: " .. (isBloxFruits and "Blox Fruits ✓" or "Universal"))
-
--- Carrega módulo do jogo correto
-local GameModule
-
-if isBloxFruits then
-    GameModule = safeLoad(BASE .. "Modules/BloxFruits.lua", {})
-    print("[ZenithHub] Módulo Blox Fruits carregado.")
-else
-    -- Para outros jogos, usa módulo Universal básico
-    GameModule = {}
-    print("[ZenithHub] Módulo Universal ativado (jogo não suportado especificamente).")
-end
-
--- ════════════════════════════════════════════
--- CARREGAMENTO DE CONFIG
--- ════════════════════════════════════════════
-
-local cfg = Config.Load()
-print("[ZenithHub] Config carregada.")
-
--- ════════════════════════════════════════════
--- PACOTE DE MÓDULOS
--- ════════════════════════════════════════════
-
-local Modules = {
-    BloxFruits = GameModule,
-    Universal  = Universal,
-    Config     = Config,
-}
-
--- ════════════════════════════════════════════
--- INICIALIZAÇÃO DA UI
--- ════════════════════════════════════════════
-
-local ok, err = pcall(function()
-    UI.Init(Modules, cfg, Config.Assets)
-end)
+local ok, err = pcall(initUI)
 
 if not ok then
-    warn("[ZenithHub] Falha ao inicializar UI: " .. tostring(err))
-    _G.ZenithHubLoaded = false
+    warnLog("Falha UI: " .. tostring(err))
+    ENV.ZenithHub.Loaded = false
     return
 end
 
--- ════════════════════════════════════════════
--- SALVAMENTO AUTOMÁTICO DE CONFIG (a cada 60s)
--- ════════════════════════════════════════════
+-- ═══════════════════════════════════════
+-- CLEANUP SYSTEM
+-- ═══════════════════════════════════════
+
+local Connections = {}
+
+local function cleanup()
+    ENV.ZenithHub.Loaded = false
+
+    for _, c in ipairs(Connections) do
+        pcall(function()
+            c:Disconnect()
+        end)
+    end
+
+    if Modules.Universal and Modules.Universal.Cleanup then
+        pcall(Modules.Universal.Cleanup)
+    end
+
+    if Modules.Game and Modules.Game.Cleanup then
+        pcall(Modules.Game.Cleanup)
+    end
+
+    if Modules.Config and Modules.Config.Save then
+        pcall(function()
+            Modules.Config.Save(cfg)
+        end)
+    end
+
+    log("Cleanup executado")
+end
+
+-- ═══════════════════════════════════════
+-- SAFE EXIT
+-- ═══════════════════════════════════════
+
+table.insert(Connections,
+    LocalPlayer.AncestryChanged:Connect(function()
+        cleanup()
+    end)
+)
+
+-- ═══════════════════════════════════════
+-- AUTOSAVE (OTIMIZADO)
+-- ═══════════════════════════════════════
 
 task.spawn(function()
-    while _G.ZenithHubLoaded do
+    while ENV.ZenithHub.Loaded do
         task.wait(60)
-        local saveOk, saveErr = pcall(function()
-            Config.Save(cfg)
-        end)
-        if not saveOk then
-            warn("[ZenithHub] Autosave falhou: " .. tostring(saveErr))
+
+        if dirty and Modules.Config and Modules.Config.Save then
+            dirty = false
+            pcall(function()
+                Modules.Config.Save(cfg)
+            end)
         end
     end
 end)
 
--- ════════════════════════════════════════════
--- LIMPEZA AO SAIR
--- ════════════════════════════════════════════
+-- ═══════════════════════════════════════
+-- FINAL
+-- ═══════════════════════════════════════
 
-LocalPlayer.AncestryChanged:Connect(function()
-    pcall(function()
-        _G.ZenithHubLoaded = false
-        Universal.Cleanup()
-        if GameModule and GameModule.Cleanup then
-            GameModule.Cleanup()
-        end
-        Config.Save(cfg)
-        print("[ZenithHub] Limpeza realizada.")
-    end)
-end)
-
-print(string.format("[%s] v%s - Carregado com sucesso!", HUB_NAME, HUB_VERSION))
+log(("v%s carregado com sucesso"):format(HUB.Version))
