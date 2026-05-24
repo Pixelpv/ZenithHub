@@ -10,8 +10,8 @@ local Config = {}
 -- ASSETS (substitua pelos seus Asset IDs)
 -- ════════════════════════════════════════════
 Config.Assets = {
-    HubLogo   = "rbxassetid://7733960981",
-    ToggleLogo = "rbxassetid://7733960981",
+    HubLogo   = "rbxassetid://134338089454511",
+    ToggleLogo = "rbxassetid://134338089454511",
     Icon_Farm  = "rbxassetid://10734950468",
     Icon_Stats = "rbxassetid://10734918743",
     Icon_Dungeon = "rbxassetid://10734918111",
