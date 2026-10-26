@@ -33,7 +33,9 @@ Antes de considerar uma alteração pronta:
 5. Confirme manualmente as mudanças em um ambiente de teste permitido.
 6. Revise as alterações em uma branch e use um pull request antes de mesclá-las à branch principal.
 
-Consulte [docs/QUALITY_REVIEW.md](docs/QUALITY_REVIEW.md) para a lista inicial de verificações.
+Documentos de apoio:
+- [Checklist de revisão estática](docs/QUALITY_REVIEW.md)
+- [Plano de testes e registro de execução](docs/TEST_PLAN.md)
 
 ## Uso responsável
 
